@@ -16,9 +16,9 @@ spec:
     spec:
       containers:
       - name: brain-tasks-app
-        image: ${ECR_REPOSITORY_URI}:latest
+        image: 305870069347.dkr.ecr.us-east-1.amazonaws.com/brain-tasks-app:latest
         ports:
-        - containerPort: 3000
+        - containerPort: 80
         resources:
           requests:
             memory: "128Mi"
@@ -29,14 +29,12 @@ spec:
         livenessProbe:
           httpGet:
             path: /
-            port: 3000
+            port: 80
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /
-            port: 3000
+            port: 80
           initialDelaySeconds: 5
           periodSeconds: 5
-      imagePullSecrets:
-      - name: ecr-secret

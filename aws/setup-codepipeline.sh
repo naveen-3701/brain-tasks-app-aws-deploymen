@@ -6,12 +6,10 @@ set -e
 PIPELINE_NAME=${1:-brain-tasks-app-pipeline}
 REGION=${2:-us-east-1}
 CODEBUILD_PROJECT_NAME=${3:-brain-tasks-app-build}
-CODEDEPLOY_APPLICATION_NAME=${4:-brain-tasks-app}
-CODEDEPLOY_DEPLOYMENT_GROUP_NAME=${5:-brain-tasks-app-deployment-group}
 
 echo "Setting up CodePipeline: $PIPELINE_NAME in region: $REGION"
 
-# Create CodePipeline service role
+# Create CodePipeline service role (skip if exists)
 aws iam create-role \
     --role-name CodePipelineServiceRole \
     --assume-role-policy-document '{
@@ -25,43 +23,48 @@ aws iam create-role \
                 "Action": "sts:AssumeRole"
             }
         ]
-    }'
+    }' 2>/dev/null || echo "Role already exists"
 
 # Attach required policies
 aws iam attach-role-policy \
     --role-name CodePipelineServiceRole \
-    --policy-arn arn:aws:iam::aws:policy/AWSCodePipelineFullAccess
+    --policy-arn arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess 2>/dev/null || echo "Policy already attached"
+
+# Get account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# Create S3 bucket for artifacts (skip if exists)
+aws s3 mb s3://codepipeline-${ACCOUNT_ID}-${REGION} --region $REGION 2>/dev/null || echo "Bucket already exists"
 
 # Create pipeline configuration
 cat > pipeline-config.json << EOF
 {
     "pipeline": {
         "name": "$PIPELINE_NAME",
-        "roleArn": "arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/CodePipelineServiceRole",
+        "roleArn": "arn:aws:iam::${ACCOUNT_ID}:role/CodePipelineServiceRole",
         "artifactStore": {
             "type": "S3",
-            "location": "codepipeline-$(aws sts get-caller-identity --query Account --output text)-$REGION"
+            "location": "codepipeline-${ACCOUNT_ID}-${REGION}"
         },
         "stages": [
             {
                 "name": "Source",
                 "actions": [
                     {
-                        "name": "Source",
+                        "name": "SourceAction",
                         "actionTypeId": {
                             "category": "Source",
                             "owner": "AWS",
-                            "provider": "CodeStarSourceConnection",
+                            "provider": "S3",
                             "version": "1"
                         },
                         "configuration": {
-                            "ConnectionArn": "arn:aws:codestar-connections:us-east-1:$(aws sts get-caller-identity --query Account --output text):connection/$(aws codestar-connections list-connections --query 'Connections[0].ConnectionArn' --output text | cut -d'/' -f2)",
-                            "FullRepositoryId": "Vennilavan12/Brain-Tasks-App",
-                            "BranchName": "main"
+                            "S3Bucket": "codepipeline-${ACCOUNT_ID}-${REGION}",
+                            "S3ObjectKey": "source.zip"
                         },
                         "outputArtifacts": [
                             {
-                                "name": "SourceCode"
+                                "name": "SourceOutput"
                             }
                         ]
                     }
@@ -71,7 +74,7 @@ cat > pipeline-config.json << EOF
                 "name": "Build",
                 "actions": [
                     {
-                        "name": "Build",
+                        "name": "BuildAction",
                         "actionTypeId": {
                             "category": "Build",
                             "owner": "AWS",
@@ -83,33 +86,10 @@ cat > pipeline-config.json << EOF
                         },
                         "inputArtifacts": [
                             {
-                                "name": "SourceCode"
+                                "name": "SourceOutput"
                             }
                         ],
                         "outputArtifacts": [
-                            {
-                                "name": "BuildOutput"
-                            }
-                        ]
-                    }
-                ]
-            },
-            {
-                "name": "Deploy",
-                "actions": [
-                    {
-                        "name": "Deploy",
-                        "actionTypeId": {
-                            "category": "Deploy",
-                            "owner": "AWS",
-                            "provider": "CodeDeploy",
-                            "version": "1"
-                        },
-                        "configuration": {
-                            "ApplicationName": "$CODEDEPLOY_APPLICATION_NAME",
-                            "DeploymentGroupName": "$CODEDEPLOY_DEPLOYMENT_GROUP_NAME"
-                        },
-                        "inputArtifacts": [
                             {
                                 "name": "BuildOutput"
                             }
@@ -122,17 +102,16 @@ cat > pipeline-config.json << EOF
 }
 EOF
 
-# Create CodePipeline
+# Create CodePipeline (skip if exists)
 aws codepipeline create-pipeline \
     --region $REGION \
-    --cli-input-json file://pipeline-config.json
+    --cli-input-json file://pipeline-config.json 2>/dev/null || echo "Pipeline already exists"
 
 echo "CodePipeline created successfully!"
 echo "Pipeline name: $PIPELINE_NAME"
 echo "Region: $REGION"
-echo "Source: GitHub (Vennilavan12/Brain-Tasks-App)"
 echo "Build: CodeBuild ($CODEBUILD_PROJECT_NAME)"
-echo "Deploy: CodeDeploy ($CODEDEPLOY_APPLICATION_NAME)"
+echo "Artifact Store: codepipeline-${ACCOUNT_ID}-${REGION}"
 
 # Clean up temporary files
 rm pipeline-config.json

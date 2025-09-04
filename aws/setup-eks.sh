@@ -19,7 +19,7 @@ if ! command -v eksctl &> /dev/null; then
     exit 1
 fi
 
-# Create EKS cluster
+# Create EKS cluster (skip if exists)
 eksctl create cluster \
     --name $CLUSTER_NAME \
     --region $REGION \
@@ -29,9 +29,7 @@ eksctl create cluster \
     --nodes-min $MIN_NODES \
     --nodes-max $MAX_NODES \
     --with-oidc \
-    --ssh-access \
-    --ssh-public-key my-key \
-    --managed
+    --managed 2>/dev/null || echo "Cluster already exists"
 
 echo "EKS cluster created successfully!"
 
@@ -41,36 +39,47 @@ aws eks update-kubeconfig --name $CLUSTER_NAME --region $REGION
 # Install AWS Load Balancer Controller
 echo "Installing AWS Load Balancer Controller..."
 
-# Create IAM OIDC provider
-eksctl utils associate-iam-oidc-provider --cluster $CLUSTER_NAME --region $REGION --approve
+# Create IAM OIDC provider (skip if exists)
+eksctl utils associate-iam-oidc-provider --cluster $CLUSTER_NAME --region $REGION --approve 2>/dev/null || echo "OIDC provider already exists"
 
-# Create IAM policy for Load Balancer Controller
+# Get account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# Create IAM policy for Load Balancer Controller (skip if exists)
 aws iam create-policy \
     --policy-name AWSLoadBalancerControllerIAMPolicy \
-    --policy-document file://aws-load-balancer-controller-policy.json
+    --policy-document file://aws-load-balancer-controller-policy.json 2>/dev/null || echo "Policy already exists"
 
-# Create service account
+# Create service account (skip if exists)
 eksctl create iamserviceaccount \
     --cluster=$CLUSTER_NAME \
     --namespace=kube-system \
     --name=aws-load-balancer-controller \
     --role-name AmazonEKSLoadBalancerControllerRole \
-    --attach-policy-arn=arn:aws:iam::$AWS_ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy \
-    --approve
+    --attach-policy-arn=arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy \
+    --approve 2>/dev/null || echo "Service account already exists"
 
 # Install Load Balancer Controller using Helm
-helm repo add eks https://aws.github.io/eks-charts
+if ! command -v helm &> /dev/null; then
+    echo "Helm is not installed. Please install it first."
+    echo "Visit: https://helm.sh/docs/intro/install/"
+    exit 1
+fi
+
+helm repo add eks https://aws.github.io/eks-charts 2>/dev/null || echo "Helm repo already exists"
 helm repo update
+
+# Install Load Balancer Controller (skip if exists)
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
     -n kube-system \
     --set clusterName=$CLUSTER_NAME \
     --set serviceAccount.create=false \
-    --set serviceAccount.name=aws-load-balancer-controller
+    --set serviceAccount.name=aws-load-balancer-controller 2>/dev/null || echo "Load Balancer Controller already installed"
 
 echo "AWS Load Balancer Controller installed!"
 
-# Create namespace for the application
-kubectl create namespace brain-tasks-app
+# Create namespace for the application (skip if exists)
+kubectl create namespace brain-tasks-app 2>/dev/null || echo "Namespace already exists"
 
 echo "EKS setup completed successfully!"
 echo "Cluster name: $CLUSTER_NAME"

@@ -8,12 +8,12 @@ REPOSITORY_NAME="brain-tasks-app"
 
 echo "Setting up ECR repository in region: $REGION"
 
-# Create ECR repository
+# Create ECR repository (skip if exists)
 aws ecr create-repository \
     --repository-name $REPOSITORY_NAME \
     --region $REGION \
     --image-scanning-configuration scanOnPush=true \
-    --encryption-configuration encryptionType=AES256
+    --encryption-configuration encryptionType=AES256 2>/dev/null || echo "Repository already exists"
 
 # Get repository URI
 REPOSITORY_URI=$(aws ecr describe-repositories \
@@ -53,7 +53,10 @@ EOF
 aws ecr set-repository-policy \
     --repository-name $REPOSITORY_NAME \
     --region $REGION \
-    --policy-text file://ecr-policy.json
+    --policy-text file://ecr-policy.json 2>/dev/null || echo "Policy already set"
 
 echo "ECR repository policy updated!"
 echo "Setup completed successfully!"
+
+# Clean up temporary files
+rm ecr-policy.json
